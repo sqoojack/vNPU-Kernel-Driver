@@ -9,7 +9,7 @@
 #define WIDTH 640
 #define HEIGHT 480
 #define MAX_TENANTS 2
-#define RING_BUFFER_SIZE 128
+#define RING_BUFFER_SIZE 8
 #define DMA_BUFFER_SIZE (64 * 64 * 4)
 
 // 指令集
