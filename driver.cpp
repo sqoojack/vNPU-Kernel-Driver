@@ -55,9 +55,11 @@ int main(int argc, char** argv) {
     
     int choice;
     while (true) {
-        print_menu();
+        // print_menu();
         if (!(std::cin >> choice)) break;
         if (choice == 0) break;
+
+        std::cout << "[Debug] Received choice: " << choice << std::endl;
 
         Command cmd;
         switch(choice) {
