@@ -20,7 +20,6 @@
 
 vnpu_shared_state* global_npu_ptr = nullptr;
 
-// 系統級 Crash Dump 攔截
 void crash_handler(int sig, siginfo_t *info, void *context) {
     if (!global_npu_ptr) _exit(1);
     
@@ -31,7 +30,6 @@ void crash_handler(int sig, siginfo_t *info, void *context) {
     report << "Signal Number: " << sig << "\n";
     report << "Faulting Memory Address: " << info->si_addr << "\n";
     
-    // 提取架構相關暫存器狀態 (支援 x86_64 與 ARM64)
 #ifdef __x86_64__
     report << "RIP: 0x" << std::hex << uc->uc_mcontext.gregs[REG_RIP] << "\n";
     report << "RSP: 0x" << std::hex << uc->uc_mcontext.gregs[REG_RSP] << "\n";
@@ -46,7 +44,6 @@ void crash_handler(int sig, siginfo_t *info, void *context) {
     report << "Head: " << global_npu_ptr->head << " | Tail: " << global_npu_ptr->tail << "\n";
     report.close();
 
-    // 寫入完整記憶體快照
     int fd = open("crash_dump.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (fd >= 0) {
         write(fd, global_npu_ptr, sizeof(vnpu_shared_state));
@@ -57,7 +54,6 @@ void crash_handler(int sig, siginfo_t *info, void *context) {
     _exit(1);
 }
 
-// 確保 TCP 串流完整收發的 Helper 函數
 bool recv_all(int socket, uint8_t* buffer, size_t length) {
     size_t bytes_received = 0;
     while (bytes_received < length) {
@@ -104,11 +100,13 @@ void tcp_server_thread(vnpu_shared_state* npu) {
             } else if (mode == 1) {
                 uint32_t offset, size_in_bytes;
                 if (recv_all(client, (uint8_t*)&offset, 4) && recv_all(client, (uint8_t*)&size_in_bytes, 4)) {
-                    // 記憶體越界阻擋機制 (Buffer Overflow Protection)
-                    if (offset + size_in_bytes <= NPU_MEM_SIZE * sizeof(float)) {
+                    
+                    // 修正：防止整數溢位造成越界寫入
+                    uint32_t max_bytes = NPU_MEM_SIZE * sizeof(float);
+                    if (size_in_bytes <= max_bytes && offset <= (max_bytes - size_in_bytes)) {
                         recv_all(client, (uint8_t*)npu->npu_mem + offset, size_in_bytes);
                     } else {
-                        LOG_ERROR("TCP Write blocked: Out of bounds", LOG_FILE, TAG);
+                        LOG_ERROR("TCP Write blocked: Out of bounds or Integer Overflow", LOG_FILE, TAG);
                     }
                 }
             }
@@ -123,7 +121,6 @@ void process_command(vnpu_shared_state* npu, vnpu_command& cmd) {
             uint32_t offA = cmd.params[0], offB = cmd.params[1], offC = cmd.params[2];
             uint32_t dim = cmd.params[3]; 
             
-            // 加入維度檢查避免記憶體越界
             if ((offA + dim*dim > NPU_MEM_SIZE) || (offB + dim*dim > NPU_MEM_SIZE) || (offC + dim*dim > NPU_MEM_SIZE)) {
                 LOG_ERROR("CMD_MATRIX_MULTIPLY bounds check failed", LOG_FILE, TAG);
                 break;
@@ -162,11 +159,22 @@ int main() {
     sigaction(SIGSEGV, &sa, NULL);
 
     int fd = open("/dev/vnpu0", O_RDWR);
-    if (fd < 0) return 1;
+    if (fd < 0) {
+        LOG_FATAL("Failed to open /dev/vnpu0", LOG_FILE, TAG);
+        return 1;
+    }
     
     vnpu_shared_state* npu = static_cast<vnpu_shared_state*>(
         mmap(nullptr, sizeof(vnpu_shared_state), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
     );
+    
+    // 修正：檢查 mmap 是否成功，避免對 MAP_FAILED 進行操作
+    if (npu == MAP_FAILED) {
+        LOG_FATAL("mmap failed", LOG_FILE, TAG);
+        close(fd);
+        return 1;
+    }
+    
     global_npu_ptr = npu;
 
     int irq_fd = eventfd(0, EFD_NONBLOCK);
@@ -193,7 +201,7 @@ int main() {
             }
             head->store(current_head, std::memory_order_release);
         } else {
-            usleep(1000); // 建議後續替換為 epoll 或 poll 監聽 eventfd，減少 CPU 負載
+            usleep(1000); 
         }
     }
     return 0;

@@ -4,7 +4,8 @@
 #include <linux/mm.h>
 #include <linux/cdev.h>
 #include <linux/eventfd.h>
-#include "../include/vnpu_common.h" // 確認路徑是否符合您的目錄結構
+#include <linux/spinlock.h>
+#include "../include/vnpu_common.h"
 
 #define DEVICE_NAME "vnpu0"
 
@@ -13,13 +14,16 @@ static struct cdev vnpu_cdev;
 static struct vnpu_shared_state *shared_mem;
 static struct eventfd_ctx *irq_ctx = NULL;
 
+// 增加 spinlock 保護 Ring Buffer
+static DEFINE_SPINLOCK(ring_lock);
+
 static int vnpu_mmap(struct file *filp, struct vm_area_struct *vma) {
     unsigned long size = vma->vm_end - vma->vm_start;
-    unsigned long pfn = vmalloc_to_pfn(shared_mem);
     
     if (size > sizeof(struct vnpu_shared_state)) return -EINVAL;
     
-    if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
+    // 修正 mmap：改用 remap_vmalloc_range
+    if (remap_vmalloc_range(vma, shared_mem, 0)) {
         return -EAGAIN;
     }
     return 0;
@@ -34,13 +38,19 @@ static long vnpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             if (copy_from_user(&user_cmd, (struct vnpu_command __user *)arg, sizeof(user_cmd)))
                 return -EFAULT;
 
+            // 修正：加入併發保護
+            spin_lock(&ring_lock);
+            
             next_tail = (shared_mem->tail + 1) % RING_BUFFER_SIZE;
             if (next_tail == shared_mem->head) {
+                spin_unlock(&ring_lock);
                 return -EBUSY; 
             }
 
             shared_mem->ring[shared_mem->tail] = user_cmd;
             smp_store_release(&shared_mem->tail, next_tail);
+            
+            spin_unlock(&ring_lock);
 
             if (irq_ctx) {
                 eventfd_signal(irq_ctx, 1);
@@ -48,8 +58,17 @@ static long vnpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
             break;
 
         case VNPU_IOCTL_SET_EVENTFD:
+            // 修正：釋放舊有的 eventfd_ctx 避免資源洩漏
+            if (irq_ctx) {
+                eventfd_ctx_put(irq_ctx);
+            }
+            
             irq_ctx = eventfd_ctx_fdget(arg);
-            if (IS_ERR(irq_ctx)) return PTR_ERR(irq_ctx);
+            if (IS_ERR(irq_ctx)) {
+                struct eventfd_ctx *err_ctx = irq_ctx;
+                irq_ctx = NULL;
+                return PTR_ERR(err_ctx);
+            }
             break;
 
         default:
@@ -85,7 +104,7 @@ static int __init vnpu_init(void) {
     }
     
     memset(shared_mem, 0, sizeof(struct vnpu_shared_state));
-    shared_mem->magic = 0x564E5055; // "VNPU" in ASCII
+    shared_mem->magic = 0x564E5055; 
     shared_mem->running = 1;
 
     printk(KERN_INFO "vNPU Driver loaded: /dev/%s\n", DEVICE_NAME);
@@ -94,7 +113,7 @@ static int __init vnpu_init(void) {
 
 static void __exit vnpu_exit(void) {
     if (irq_ctx) eventfd_ctx_put(irq_ctx);
-    vfree(shared_mem);
+    if (shared_mem) vfree(shared_mem);
     cdev_del(&vnpu_cdev);
     unregister_chrdev_region(MKDEV(major_num, 0), 1);
     printk(KERN_INFO "vNPU Driver unloaded\n");
