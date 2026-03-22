@@ -11,7 +11,7 @@ st.set_page_config(page_title="vGPU Sim", layout="wide")
 st.title("🖥️ vGPU Architecture Simulator (macOS/Linux)")
 
 # --- 設定區 ---
-SHM_FILENAME = "vgpu_ram.bin" 
+SHM_FILENAME = "/dev/vgpu0"
 WIDTH = 640
 HEIGHT = 480
 VRAM_SIZE = WIDTH * HEIGHT * 4
