@@ -16,15 +16,6 @@ WIDTH = 640
 HEIGHT = 480
 VRAM_SIZE = WIDTH * HEIGHT * 4
 
-# --- 關鍵修正：結構必須與 C++ common.h 完全一致 ---
-# C++ struct 佈局 (使用 #pragma pack(1)):
-# 1. uint32 magic (4B)
-# 2. uint32 running (4B)
-# 3. uint32 frame_counter (4B)
-# 4. float temperature (4B)
-# 5. uint64 last_heartbeat (8B)  <-- 新增
-# 6. uint32 watchdog_reset_count (4B) <-- 新增
-# ----------------------------------------------
 # 格式字串: I (int), f (float), Q (unsigned long long)
 HEADER_FMT = "IIIfQI" 
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
