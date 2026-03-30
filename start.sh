@@ -23,8 +23,7 @@ echo "=== 1. Compile and Load Kernel Module ==="
 cd kernel_module
 make
 sudo insmod vnpu_drv.ko
-# Node should be auto-created if you updated the C code with device_create()
-# If not, you might still need: sudo chmod 666 /dev/vnpu0
+sudo chmod 666 /dev/vnpu0
 cd ..
 
 echo "=== 2. Build C++ Firmware and Driver ==="
@@ -44,7 +43,7 @@ sleep 2
 
 echo "=== 4. Launch Streamlit App ==="
 # Run the Streamlit application
-streamlit run scripts/app.py
+python3 -m streamlit run scripts/app.py
 
 # Final Cleanup when Streamlit exits
 kill $FW_PID || true
